@@ -1,0 +1,29 @@
+# Data & Analysis
+pandas==2.2.3
+numpy==2.1.3
+pandas-ta==0.3.14b
+
+# Exchange connectivity & market data
+ccxt==4.4.28
+
+# Database
+# sqlite3 is built into Python — no install needed
+
+# AI / Screenshot parsing
+anthropic==0.40.0
+
+# Environment variables
+python-dotenv==1.0.1
+
+# Backtesting
+vectorbt==0.26.2
+
+# Visualisation
+matplotlib==3.9.3
+plotly==5.24.1
+
+# Notebooks
+jupyterlab==4.3.3
+
+# HTTP requests
+requests==2.32.3

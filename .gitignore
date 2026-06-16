@@ -1,0 +1,35 @@
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Environment variables (API keys — never commit these)
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# macOS
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Database files (schema is tracked, raw data is not)
+*.db
+*.sqlite
+
+# Raw market data (large files, re-downloadable)
+data/raw/
+data/processed/
+
+# Logs
+*.log
+logs/
+
+# VSCode
+.vscode/
