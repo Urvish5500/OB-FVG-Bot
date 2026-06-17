@@ -17,7 +17,7 @@ def atr(df: pd.DataFrame, period: int = 200) -> pd.Series:
     return tr.rolling(window=period, min_periods=1).mean()
 
 
-def detect_zones(df: pd.DataFrame, lookback: int = 20, vol_len: int = 2, box_width: float = 1.0) -> pd.DataFrame:
+def detect_zones(df: pd.DataFrame, lookback: int = 30, vol_len: int = 2, box_width: float = 1.0) -> pd.DataFrame:
     dv = delta_volume(df)
 
     vol_scaled = dv / 2.5
