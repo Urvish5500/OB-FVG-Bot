@@ -1,6 +1,6 @@
 from data.fetcher import fetch_ohlcv
 from indicators.ema import get_ema_signals
-from indicators.sr_zones import detect_zones
+from indicators.sr_zones import detect_zones, intact_zones
 from strategy.levels import compute_stop, compute_targets, size_trade, is_rejection
 
 
@@ -25,13 +25,17 @@ def detect_signal(symbol: str, equity: float = 10000.0) -> dict | None:
     direction = "long" if bias == "bullish" else "short"
     zone_type = "support" if direction == "long" else "resistance"
 
-    for _, zone in zones.iterrows():
+    # check the latest bar against every box still intact at this bar — a box
+    # formed days ago can be retested now, until price closes through it
+    zones_now = intact_zones(zones, df_15m.index[last_idx])
+
+    for _, zone in zones_now.iterrows():
         if zone["type"] != zone_type:
             continue
         if is_rejection(direction, bar, zone):
             entry = bar["close"]
             sl = compute_stop(direction, entry, zone, df_15m, last_idx)
-            tp1, tp2 = compute_targets(direction, entry, sl, zones)
+            tp1, tp2 = compute_targets(direction, entry, sl, zones_now)
             sizing = size_trade(equity, entry, sl)
             return {
                 "symbol": symbol,

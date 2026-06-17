@@ -1,7 +1,7 @@
 import pandas as pd
 from data.fetcher import fetch_ohlcv
 from indicators.ema import get_ema_signals
-from indicators.sr_zones import detect_zones
+from indicators.sr_zones import detect_zones, intact_zones
 from strategy.levels import compute_stop, compute_targets, is_rejection
 
 MAX_HOLD_BARS = 200  # ~2 days on 15m before a runner is force-closed at market
@@ -97,8 +97,9 @@ def run_backtest(symbol: str = "BTC/USDT") -> pd.DataFrame:
         direction = "long" if bias == "bullish" else "short"
         zone_type = "support" if direction == "long" else "resistance"
 
-        # only boxes that already exist at this bar (no lookahead)
-        zones_now = zones[zones["bar_index"] <= df_15m.index[i]]
+        # boxes that are intact at this bar: confirmed (no lookahead) and not
+        # yet closed through — persistence lets old boxes catch later retests
+        zones_now = intact_zones(zones, df_15m.index[i])
 
         for _, zone in zones_now.iterrows():
             if zone["type"] != zone_type:
