@@ -7,9 +7,12 @@ from database.db import insert_trade
 
 def log_from_parsed(data: dict):
     risk = abs(data["entry_price"] - data["stop_loss"])
-    reward = abs(data["take_profit_1"] - data["entry_price"])
+    # R:R reported against the runner target (TP2) if drawn, else TP1
+    target = data.get("take_profit_2") or data["take_profit_1"]
+    reward = abs(target - data["entry_price"])
     risk_reward = round(reward / risk, 2) if risk > 0 else None
-    position_size = round(data["total_equity"] * 0.004, 2)
+    # risk-based size: a stop-out loses exactly 0.4% of equity
+    position_size = round((data["total_equity"] * 0.004) / risk, 6) if risk > 0 else 0.0
 
     trade = Trade(
         symbol=data["symbol"],
@@ -29,7 +32,7 @@ def log_from_parsed(data: dict):
         notes=data.get("notes"),
     )
     insert_trade(trade)
-    print(f"✓ {trade.symbol} {trade.direction} @ {trade.entry_price} | R:R {risk_reward} | Size ${position_size}")
+    print(f"✓ {trade.symbol} {trade.direction} @ {trade.entry_price} | R:R {risk_reward} | size {position_size}")
 
 
 if __name__ == "__main__":

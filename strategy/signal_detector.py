@@ -2,9 +2,10 @@ from data.fetcher import fetch_ohlcv
 from indicators.ema import get_ema_signals
 from indicators.sr_zones import detect_zones
 from indicators.volume_analysis import get_volume_signals
+from strategy.levels import compute_stop, compute_targets, position_size
 
 
-def detect_signal(symbol: str) -> dict | None:
+def detect_signal(symbol: str, equity: float = 10000.0) -> dict | None:
     df_1d = get_ema_signals(fetch_ohlcv(symbol, "1d", limit=100))
     df_4h = get_ema_signals(fetch_ohlcv(symbol, "4h", limit=100))
     df_15m = fetch_ohlcv(symbol, "15m", limit=200)
@@ -15,7 +16,8 @@ def detect_signal(symbol: str) -> dict | None:
 
     zones = detect_zones(df_15m)
 
-    bar = df_15m.iloc[-1]
+    last_idx = len(df_15m) - 1
+    bar = df_15m.iloc[last_idx]
     bias = bar["bias_1d"] if bar["bias_1d"] == bar["bias_4h"] else None
 
     if bias not in ("bullish", "bearish"):
@@ -30,15 +32,17 @@ def detect_signal(symbol: str) -> dict | None:
         if zone["type"] != zone_type:
             continue
         if zone["zone_bottom"] <= bar["close"] <= zone["zone_top"]:
-            sl = zone["zone_bottom"] if direction == "long" else zone["zone_top"]
-            risk = abs(bar["close"] - sl)
-            tp = bar["close"] + 2 * risk if direction == "long" else bar["close"] - 2 * risk
+            entry = bar["close"]
+            sl = compute_stop(direction, entry, zone, df_15m, last_idx)
+            tp1, tp2 = compute_targets(direction, entry, sl, zones)
             return {
                 "symbol": symbol,
                 "direction": direction,
-                "entry_price": bar["close"],
+                "entry_price": entry,
                 "stop_loss": sl,
-                "take_profit_1": tp,
+                "take_profit_1": tp1,
+                "take_profit_2": tp2,
+                "position_size": position_size(equity, entry, sl),
                 "bias_1d": bar["bias_1d"],
                 "bias_4h": bar["bias_4h"],
             }

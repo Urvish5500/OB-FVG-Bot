@@ -9,9 +9,10 @@ TOTAL_EQUITY = 10000.0
 
 
 def log_signal(signal: dict):
-    position_size = round(TOTAL_EQUITY * 0.004, 2)
-    risk = abs(signal["entry_price"] - signal["stop_loss"])
-    reward = abs(signal["take_profit_1"] - signal["entry_price"])
+    entry = signal["entry_price"]
+    risk = abs(entry - signal["stop_loss"])
+    # R:R reported against the runner target (TP2), matching the hand-drawn setups
+    reward = abs(signal["take_profit_2"] - entry)
     risk_reward = round(reward / risk, 2) if risk > 0 else None
 
     trade = Trade(
@@ -21,15 +22,18 @@ def log_signal(signal: dict):
         entry_timeframe="15m",
         bias_1d=signal["bias_1d"],
         bias_4h=signal["bias_4h"],
-        entry_price=signal["entry_price"],
+        entry_price=entry,
         entry_time=datetime.now(),
-        position_size=position_size,
+        position_size=signal["position_size"],
         stop_loss=signal["stop_loss"],
         take_profit_1=signal["take_profit_1"],
+        take_profit_2=signal["take_profit_2"],
         risk_reward=risk_reward,
     )
     insert_trade(trade)
-    print(f"  ✓ Signal logged: {trade.symbol} {trade.direction} @ {trade.entry_price} | R:R {risk_reward}")
+    print(f"  ✓ {trade.symbol} {trade.direction} @ {entry} | SL {trade.stop_loss} "
+          f"| TP1 {trade.take_profit_1} | TP2 {trade.take_profit_2} "
+          f"| R:R {risk_reward} | size {trade.position_size}")
 
 
 def run():
@@ -45,7 +49,7 @@ def run():
             last_checked_minute = now.minute
             print(f"[{now.strftime('%Y-%m-%d %H:%M')}] Scanning {', '.join(SYMBOLS)}...")
             for symbol in SYMBOLS:
-                signal = detect_signal(symbol)
+                signal = detect_signal(symbol, equity=TOTAL_EQUITY)
                 if signal:
                     log_signal(signal)
                 else:

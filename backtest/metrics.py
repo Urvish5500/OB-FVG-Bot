@@ -5,25 +5,23 @@ def calculate_metrics(results: pd.DataFrame) -> dict:
     if results.empty:
         return {}
 
-    wins = (results["outcome"] == "win").sum()
-    losses = (results["outcome"] == "loss").sum()
-    timeouts = (results["outcome"] == "timeout").sum()
+    R = results["realized_R"]
     total = len(results)
-    rr = results["rr_target"].iloc[0]
+    wins = int((R > 0).sum())
+    losses = int((R < 0).sum())
+    scratches = int((R == 0).sum())
 
-    win_rate = round(wins / (wins + losses) * 100, 1) if (wins + losses) > 0 else 0
+    win_rate = round(wins / total * 100, 1)
+    total_R = round(R.sum(), 2)
+    avg_R = round(R.mean(), 2)
 
-    r_series = results["outcome"].map({"win": rr, "loss": -1, "timeout": -1})
-    total_R = round(r_series.sum(), 2)
-    avg_R = round(r_series.mean(), 2)
-
-    gross_wins = wins * rr
-    gross_losses = losses + timeouts
-    profit_factor = round(gross_wins / gross_losses, 2) if gross_losses > 0 else float("inf")
+    gross_win = R[R > 0].sum()
+    gross_loss = abs(R[R < 0].sum())
+    profit_factor = round(gross_win / gross_loss, 2) if gross_loss > 0 else float("inf")
 
     max_loss = current = 0
-    for outcome in results["outcome"]:
-        if outcome != "win":
+    for r in R:
+        if r < 0:
             current += 1
             max_loss = max(max_loss, current)
         else:
@@ -31,9 +29,9 @@ def calculate_metrics(results: pd.DataFrame) -> dict:
 
     return {
         "total_trades": total,
-        "wins": int(wins),
-        "losses": int(losses),
-        "timeouts": int(timeouts),
+        "wins": wins,
+        "losses": losses,
+        "breakeven": scratches,
         "win_rate_pct": win_rate,
         "total_R": total_R,
         "avg_R_per_trade": avg_R,
