@@ -26,6 +26,10 @@ class Trade:
     take_profit_2: Optional[float] = None
     risk_reward: Optional[float] = None
 
+    # Sizing
+    notional: Optional[float] = None   # position value in USDT (quantity * entry)
+    leverage: Optional[float] = None   # leverage needed to hold notional (min 1x)
+
     # Exit
     exit_price: Optional[float] = None
     exit_time: Optional[datetime] = None

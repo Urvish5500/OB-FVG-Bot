@@ -29,11 +29,14 @@ def log_signal(signal: dict):
         take_profit_1=signal["take_profit_1"],
         take_profit_2=signal["take_profit_2"],
         risk_reward=risk_reward,
+        notional=signal["notional"],
+        leverage=signal["leverage"],
     )
     insert_trade(trade)
     print(f"  ✓ {trade.symbol} {trade.direction} @ {entry} | SL {trade.stop_loss} "
           f"| TP1 {trade.take_profit_1} | TP2 {trade.take_profit_2} "
-          f"| R:R {risk_reward} | size {trade.position_size}")
+          f"| R:R {risk_reward} | qty {trade.position_size} "
+          f"| {trade.leverage}x (${trade.notional})")
 
 
 def run():

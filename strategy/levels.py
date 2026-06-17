@@ -54,10 +54,19 @@ def compute_targets(direction: str, entry: float, stop: float, zones):
     return tp1, tp2
 
 
-def position_size(equity: float, entry: float, stop: float,
-                  risk_pct: float = RISK_PCT) -> float:
-    """Quantity (base units) so a stop-out loses exactly risk_pct of equity."""
+def size_trade(equity: float, entry: float, stop: float,
+               risk_pct: float = RISK_PCT) -> dict:
+    """Risk-based sizing. Quantity is set so a stop-out loses exactly risk_pct
+    of equity; leverage is whatever is needed to hold that notional (min 1x),
+    matching a manual trade calculator."""
     risk_per_unit = abs(entry - stop)
     if risk_per_unit == 0:
-        return 0.0
-    return round((equity * risk_pct) / risk_per_unit, 6)
+        return {"quantity": 0.0, "notional": 0.0, "leverage": 1.0}
+    qty = (equity * risk_pct) / risk_per_unit
+    notional = qty * entry
+    leverage = max(1.0, notional / equity)
+    return {
+        "quantity": round(qty, 6),
+        "notional": round(notional, 2),
+        "leverage": round(leverage, 2),
+    }

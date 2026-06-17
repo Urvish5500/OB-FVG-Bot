@@ -2,7 +2,7 @@ from data.fetcher import fetch_ohlcv
 from indicators.ema import get_ema_signals
 from indicators.sr_zones import detect_zones
 from indicators.volume_analysis import get_volume_signals
-from strategy.levels import compute_stop, compute_targets, position_size
+from strategy.levels import compute_stop, compute_targets, size_trade
 
 
 def detect_signal(symbol: str, equity: float = 10000.0) -> dict | None:
@@ -35,6 +35,7 @@ def detect_signal(symbol: str, equity: float = 10000.0) -> dict | None:
             entry = bar["close"]
             sl = compute_stop(direction, entry, zone, df_15m, last_idx)
             tp1, tp2 = compute_targets(direction, entry, sl, zones)
+            sizing = size_trade(equity, entry, sl)
             return {
                 "symbol": symbol,
                 "direction": direction,
@@ -42,7 +43,9 @@ def detect_signal(symbol: str, equity: float = 10000.0) -> dict | None:
                 "stop_loss": sl,
                 "take_profit_1": tp1,
                 "take_profit_2": tp2,
-                "position_size": position_size(equity, entry, sl),
+                "position_size": sizing["quantity"],
+                "notional": sizing["notional"],
+                "leverage": sizing["leverage"],
                 "bias_1d": bar["bias_1d"],
                 "bias_4h": bar["bias_4h"],
             }

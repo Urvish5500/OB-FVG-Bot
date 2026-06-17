@@ -3,6 +3,7 @@ from pathlib import Path
 from datetime import datetime
 from models.trades import Trade
 from database.db import insert_trade
+from strategy.levels import size_trade
 
 SCREENSHOT_DIR = Path("data/trades")
 
@@ -34,17 +35,21 @@ def log_trade():
 
     # Entry
     entry_price = float(input("Entry price: "))
-    total_equity = float(input("Total equity (USDT): "))
-    position_size = round(total_equity * 0.004, 2)
-    print(f"  → Position size: ${position_size} USDT (0.4% of ${total_equity})")
     stop_loss = float(input("Stop loss price: "))
     take_profit_1 = float(input("Take profit 1 price: "))
     tp2_input = input("Take profit 2 price (press Enter to skip): ").strip()
     take_profit_2 = float(tp2_input) if tp2_input else None
+    total_equity = float(input("Total equity (USDT): "))
 
-    # Auto-compute risk/reward
+    # Risk-based sizing + leverage (a stop-out loses exactly 0.4% of equity)
+    sizing = size_trade(total_equity, entry_price, stop_loss)
+    print(f"  → Qty: {sizing['quantity']} | {sizing['leverage']}x | "
+          f"notional ${sizing['notional']}")
+
+    # Auto-compute risk/reward against the runner target (TP2) if given
     risk = abs(entry_price - stop_loss)
-    reward = abs(take_profit_1 - entry_price)
+    target = take_profit_2 if take_profit_2 else take_profit_1
+    reward = abs(target - entry_price)
     risk_reward = round(reward / risk, 2) if risk > 0 else None
 
     # Journal
@@ -60,16 +65,19 @@ def log_trade():
         bias_4h=bias_4h,
         entry_price=entry_price,
         entry_time=datetime.now(),
-        position_size=position_size,
+        position_size=sizing["quantity"],
         stop_loss=stop_loss,
         take_profit_1=take_profit_1,
         take_profit_2=take_profit_2,
         risk_reward=risk_reward,
+        notional=sizing["notional"],
+        leverage=sizing["leverage"],
         screenshot_path=screenshot_path,
         notes=notes,
     )
     insert_trade(trade)
-    print(f"\n✓ Trade logged: {symbol} {direction} @ {entry_price} | R:R {risk_reward} | Screenshot saved.")
+    print(f"\n✓ Trade logged: {symbol} {direction} @ {entry_price} | R:R {risk_reward} "
+          f"| {sizing['leverage']}x | Screenshot saved.")
 
 
 if __name__ == "__main__":
