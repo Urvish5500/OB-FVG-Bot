@@ -2,7 +2,7 @@ import os
 import psycopg2
 from dotenv import load_dotenv
 from models.trades import Trade
-from strategy.levels import MAKER_FEE, TAKER_FEE, exit_is_maker
+from strategy.levels import fee_in_R, RISK_PCT
 
 load_dotenv()
 
@@ -41,6 +41,8 @@ def init_db():
             fees_r FLOAT,
             net_pnl_usdt FLOAT,
             net_r FLOAT,
+            realized_r FLOAT,
+            tp1_filled BOOLEAN DEFAULT FALSE,
             outcome VARCHAR(20),
             screenshot_path TEXT,
             notes TEXT,
@@ -54,6 +56,8 @@ def init_db():
     cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS fees_r FLOAT")
     cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS net_pnl_usdt FLOAT")
     cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS net_r FLOAT")
+    cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS realized_r FLOAT")
+    cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS tp1_filled BOOLEAN DEFAULT FALSE")
     conn.commit()
     cur.close()
     conn.close()
@@ -111,14 +115,29 @@ def get_open_trades():
     return [dict(zip(columns, row)) for row in rows]
 
 
-def close_trade(trade_id: int, exit_price: float, exit_reason: str = "manual",
-                notes: str = None):
-    """Record the exit of an open trade and compute its P&L and outcome."""
+def mark_tp1_filled(trade_id: int):
+    """Book the 50% at TP1: flag the trade. The working stop is then breakeven
+    (entry) — derived from this flag, so no separate stop column is needed."""
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("UPDATE trades SET tp1_filled = TRUE WHERE id = %s", (trade_id,))
+    conn.commit()
+    cur.close()
+    conn.close()
+
+
+def close_trade(trade_id: int, runner_exit_price: float, hit_tp1: bool,
+                exit_reason: str, final_is_market: bool, notes: str = None):
+    """Finalize an open trade with the blended 50%@TP1 / 50%@runner model — the
+    exact math as backtest.simulate_outcome and the manual journal. The half
+    booked at TP1 is worth +1.0R; the runner adds 0.5 * its R from entry (floored
+    at breakeven once TP1 filled). Records gross R, fees (shared model), and net.
+    """
     conn = get_connection()
     cur = conn.cursor()
     cur.execute(
-        "SELECT entry_price, direction, position_size, stop_loss FROM trades WHERE id = %s",
-        (trade_id,),
+        "SELECT entry_price, direction, position_size, stop_loss, take_profit_1 "
+        "FROM trades WHERE id = %s", (trade_id,),
     )
     row = cur.fetchone()
     if row is None:
@@ -126,37 +145,43 @@ def close_trade(trade_id: int, exit_price: float, exit_reason: str = "manual",
         conn.close()
         raise ValueError(f"No trade with id {trade_id}")
 
-    entry_price, direction, qty, stop_loss = row
+    entry, direction, qty, sl, tp1 = row
     sign = 1 if direction == "long" else -1
-    pnl_usdt = round(sign * (exit_price - entry_price) * qty, 2)
-    pnl_pct = round(sign * (exit_price - entry_price) / entry_price * 100, 2)
+    risk = abs(entry - sl)
+    one_R = qty * risk                                   # $ value of 1R (= RISK_PCT * equity)
 
-    # Fees via the shared model: entry filled as a limit (maker); the exit is
-    # maker only for take-profit reasons, else taker (stop/manual/market close).
-    exit_rate = MAKER_FEE if exit_is_maker(exit_reason) else TAKER_FEE
-    fees_usdt = round(qty * entry_price * MAKER_FEE + qty * exit_price * exit_rate, 2)
+    runner_R = sign * (runner_exit_price - entry) / risk if risk else 0.0
+    if hit_tp1:
+        realized_R = round(1.0 + 0.5 * max(runner_R, 0.0), 2)
+    else:
+        realized_R = round(max(runner_R, -1.0), 2)
+
+    fee_R = fee_in_R(entry, sl, tp1, runner_exit_price, hit_tp1, final_is_market)
+    fees_usdt = round(fee_R * one_R, 2)
+    fees_r = round(fee_R, 2)
+    pnl_usdt = round(realized_R * one_R, 2)
+    pnl_pct = round(realized_R * RISK_PCT * 100, 2)       # % of equity, like the journal
     net_pnl_usdt = round(pnl_usdt - fees_usdt, 2)
-    risk = abs(entry_price - stop_loss)
-    one_R = qty * risk                                   # = RISK_PCT * equity_at_entry
-    fees_r = round(fees_usdt / one_R, 2) if one_R > 0 else None
-    net_r = round(net_pnl_usdt / one_R, 2) if one_R > 0 else None
-    # outcome classified on gross PnL, to match the journal and backtest
-    outcome = "win" if pnl_usdt > 0 else "loss" if pnl_usdt < 0 else "breakeven"
+    net_r = round(realized_R - fee_R, 2)
+    # outcome on gross R, to match the journal and backtest (a TP1-then-BE is +1R = win)
+    outcome = "win" if realized_R > 0 else "loss" if realized_R < 0 else "breakeven"
 
     cur.execute("""
         UPDATE trades
-        SET exit_price = %s, exit_time = NOW(), exit_reason = %s,
-            pnl_usdt = %s, pnl_pct = %s,
+        SET exit_price = %s, exit_time = NOW(), exit_reason = %s, tp1_filled = %s,
+            realized_r = %s, pnl_usdt = %s, pnl_pct = %s,
             fees_usdt = %s, fees_r = %s, net_pnl_usdt = %s, net_r = %s, outcome = %s,
             notes = COALESCE(notes || ' | ' || %s, notes, %s)
         WHERE id = %s
-    """, (exit_price, exit_reason, pnl_usdt, pnl_pct,
+    """, (runner_exit_price, exit_reason, hit_tp1, realized_R, pnl_usdt, pnl_pct,
           fees_usdt, fees_r, net_pnl_usdt, net_r, outcome, notes, notes, trade_id))
     conn.commit()
     cur.close()
     conn.close()
-    print(f"✓ Trade {trade_id} closed @ {exit_price} | {outcome} "
-          f"| gross ${pnl_usdt} | fees ${fees_usdt} ({fees_r}R) | NET ${net_pnl_usdt} ({net_r}R)")
+    print(f"✓ Trade {trade_id} closed [{exit_reason}] @ {runner_exit_price} | {outcome} "
+          f"| {realized_R}R gross | fees ${fees_usdt} ({fees_r}R) | NET {net_r}R / ${net_pnl_usdt}")
+    return {"trade_id": trade_id, "outcome": outcome, "realized_r": realized_R,
+            "net_r": net_r, "net_pnl_usdt": net_pnl_usdt}
     return {"trade_id": trade_id, "outcome": outcome, "pnl_usdt": pnl_usdt,
             "pnl_pct": pnl_pct, "fees_usdt": fees_usdt, "net_pnl_usdt": net_pnl_usdt,
             "net_r": net_r}

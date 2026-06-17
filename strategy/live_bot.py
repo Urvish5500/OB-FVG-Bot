@@ -1,8 +1,9 @@
 import time
 from datetime import datetime
 from strategy.signal_detector import detect_signal
+from strategy.position_manager import manage_open_trades
 from models.trades import Trade
-from database.db import insert_trade
+from database.db import insert_trade, get_open_trades
 
 SYMBOLS = ["BTC/USDT", "ETH/USDT"]
 TOTAL_EQUITY = 10000.0
@@ -41,7 +42,7 @@ def log_signal(signal: dict):
 
 def run():
     print(f"OB-FVG-Bot live — watching {', '.join(SYMBOLS)}")
-    print("Signals logged to Supabase on every 15m candle close.")
+    print("Paper-trading: manage open positions + log new entries every 15m close.")
     print("Press Ctrl+C to stop.\n")
 
     last_checked_minute = -1
@@ -51,7 +52,16 @@ def run():
         if now.minute % 15 == 0 and now.minute != last_checked_minute:
             last_checked_minute = now.minute
             print(f"[{now.strftime('%Y-%m-%d %H:%M')}] Scanning {', '.join(SYMBOLS)}...")
+
+            # 1) advance any open positions on the bar that just closed
+            manage_open_trades(now)
+
+            # 2) look for new entries — but only one open trade per symbol at a time
+            held = {t["symbol"] for t in get_open_trades()}
             for symbol in SYMBOLS:
+                if symbol.replace("/", "") in held:
+                    print(f"  Holding open position on {symbol} — no new entry")
+                    continue
                 signal = detect_signal(symbol, equity=TOTAL_EQUITY)
                 if signal:
                     log_signal(signal)
