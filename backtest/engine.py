@@ -50,22 +50,16 @@ def simulate_outcome(signal: dict, df: pd.DataFrame, rr_target: float) -> dict:
 
 
 def run_backtest(symbol: str = "BTC/USDT", rr_target: float = 2.0) -> pd.DataFrame:
-    # Fetch data for all three timeframes
     df_1d = get_ema_signals(fetch_ohlcv(symbol, "1d", limit=365))
     df_4h = get_ema_signals(fetch_ohlcv(symbol, "4h", limit=365 * 6))
     df_15m = fetch_ohlcv(symbol, "15m", limit=365 * 96)
 
-    # Add volume signals to 15m
     df_15m = get_volume_signals(df_15m)
-
-    # Align higher timeframe biases down to 15m using forward fill
     df_15m["bias_1d"] = df_1d["trend_bias"].reindex(df_15m.index, method="ffill")
     df_15m["bias_4h"] = df_4h["trend_bias"].reindex(df_15m.index, method="ffill")
 
-    # Detect SR zones on 15m
     zones = detect_zones(df_15m)
 
-    # Loop through 15m bars looking for entry signals
     signals = []
     for i in range(len(df_15m)):
         bar = df_15m.iloc[i]
@@ -93,7 +87,6 @@ def run_backtest(symbol: str = "BTC/USDT", rr_target: float = 2.0) -> pd.DataFra
                 })
                 break
 
-    # Simulate outcome for each signal
     results = []
     for signal in signals:
         result = simulate_outcome(signal, df_15m, rr_target)
@@ -103,3 +96,21 @@ def run_backtest(symbol: str = "BTC/USDT", rr_target: float = 2.0) -> pd.DataFra
         return pd.DataFrame()
 
     return pd.DataFrame(results)
+
+
+def run_multi_backtest(symbols: list = None, rr_target: float = 2.0) -> pd.DataFrame:
+    if symbols is None:
+        symbols = ["BTC/USDT", "ETH/USDT"]
+
+    all_results = []
+    for symbol in symbols:
+        print(f"Running backtest for {symbol}...")
+        results = run_backtest(symbol, rr_target)
+        if not results.empty:
+            results["symbol"] = symbol
+            all_results.append(results)
+
+    if not all_results:
+        return pd.DataFrame()
+
+    return pd.concat(all_results, ignore_index=True)
