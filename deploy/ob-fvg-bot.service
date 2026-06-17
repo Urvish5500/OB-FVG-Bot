@@ -1,0 +1,16 @@
+[Unit]
+Description=OB-FVG-Bot live signal detector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/OB-FVG-Bot
+ExecStart=/root/OB-FVG-Bot/.venv/bin/python -u -m strategy.live_bot
+Restart=always
+RestartSec=10
+StandardOutput=append:/root/OB-FVG-Bot/bot.log
+StandardError=append:/root/OB-FVG-Bot/bot.log
+
+[Install]
+WantedBy=multi-user.target
