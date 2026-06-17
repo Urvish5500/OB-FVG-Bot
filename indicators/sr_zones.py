@@ -17,7 +17,7 @@ def atr(df: pd.DataFrame, period: int = 200) -> pd.Series:
     return tr.rolling(window=period, min_periods=1).mean()
 
 
-def detect_zones(df: pd.DataFrame, lookback: int = 30, vol_len: int = 2, box_width: float = 1.0) -> pd.DataFrame:
+def detect_zones(df: pd.DataFrame, lookback: int = 30, vol_len: int = 2, box_width: float = 1.0, right: int = 3) -> pd.DataFrame:
     dv = delta_volume(df)
 
     vol_scaled = dv / 2.5
@@ -26,13 +26,16 @@ def detect_zones(df: pd.DataFrame, lookback: int = 30, vol_len: int = 2, box_wid
 
     zone_width = atr(df) * box_width
 
-    ph = pivot_high(df['high'], lookback)
-    pl = pivot_low(df['low'], lookback)
+    ph = pivot_high(df['high'], lookback, right)
+    pl = pivot_low(df['low'], lookback, right)
 
     zones = []
+    last = len(df) - 1
 
     for i in range(len(df)):
-        idx = df.index[i]
+        # the pivot is at bar i but only confirmed `right` bars later — the box
+        # is not tradeable until then, so anchor availability to the confirm bar
+        idx = df.index[min(i + right, last)]
 
         if not pd.isna(ph.iloc[i]) and dv.iloc[i] < vol_lo.iloc[i]:
             zones.append({
