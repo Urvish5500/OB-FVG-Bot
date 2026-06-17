@@ -8,6 +8,23 @@ SWING_LOOKBACK = 20   # bars (~5h on 15m) for the recent swing-high/low referenc
 RISK_PCT = 0.004      # risk exactly 0.4% of equity per trade
 MIN_REWARD_RR = 2.0   # only take entries where the next opposing box is >= this many R away
 
+# Binance USDⓈ-M fees, single source of truth shared by the backtest, the manual
+# journal, and live trade closing. Limit fills (entries + resting take-profits)
+# are maker; market fills (stop-outs, breakeven stops, timeouts, manual market
+# exits) are taker.
+TAKER_FEE = 0.0005    # 0.05% market fill
+MAKER_FEE = 0.0002    # 0.02% limit fill
+
+# Exit reasons that fill as a resting limit take-profit (maker). Anything else —
+# stop-out, breakeven, timeout, manual/market close — is a taker market fill.
+MAKER_EXIT_REASONS = ("tp", "tp1", "tp2", "tp_box", "tp_3r", "take_profit")
+
+
+def exit_is_maker(exit_reason: str, tp_market: bool = False) -> bool:
+    """Whether the exit leg fills as maker (limit TP) vs taker (market). The
+    single decision point shared by the journal and live close_trade."""
+    return (not tp_market) and (exit_reason in MAKER_EXIT_REASONS)
+
 
 def is_rejection(direction: str, bar, zone) -> bool:
     """True if the bar wicked into the box and closed back out in the bias
@@ -71,6 +88,31 @@ def compute_targets(direction: str, entry: float, stop: float, zones):
         tp1 = entry - 2 * risk
         tp2 = entry - 3 * risk
     return tp1, tp2
+
+
+def fee_in_R(entry: float, stop: float, tp1: float, final_exit: float,
+             hit_tp1: bool, final_is_market: bool, tp_market: bool = False) -> float:
+    """Round-turn trading fees expressed in R for the blended 50%@TP1 / 50%@runner
+    model. Equity/size-independent: with risk-based sizing the fee in R depends
+    only on the price legs and the stop distance, so the identical number applies
+    to the R-based backtest and the $-based manual journal (which multiplies by
+    RISK_PCT * equity to get dollars).
+
+    Entry (full size) and resting take-profits fill as maker. The final leg is
+    taker when it is a stop-out / breakeven / timeout (final_is_market) or was
+    clicked out at market (tp_market).
+    """
+    risk = abs(entry - stop)
+    if risk == 0:
+        return 0.0
+    final_rate = TAKER_FEE if (final_is_market or tp_market) else MAKER_FEE
+    fee = entry * MAKER_FEE                          # entry leg, full size, limit
+    if hit_tp1:
+        tp1_rate = TAKER_FEE if tp_market else MAKER_FEE
+        fee += 0.5 * tp1 * tp1_rate + 0.5 * final_exit * final_rate
+    else:
+        fee += final_exit * final_rate              # whole position exits at once
+    return round(fee / risk, 4)
 
 
 def size_trade(equity: float, entry: float, stop: float,

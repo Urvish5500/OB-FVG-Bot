@@ -3,7 +3,7 @@ from data.fetcher import fetch_ohlcv
 from indicators.ema import get_ema_signals
 from indicators.sr_zones import detect_zones, intact_zones
 from strategy.levels import (compute_stop, compute_targets, is_rejection,
-                             reward_to_target, MIN_REWARD_RR)
+                             reward_to_target, MIN_REWARD_RR, fee_in_R)
 
 MAX_HOLD_BARS = 200  # ~2 days on 15m before a runner is force-closed at market
 
@@ -64,6 +64,19 @@ def simulate_outcome(signal: dict, df: pd.DataFrame) -> dict:
         else:
             realized_R = max(cur_R, -1.0)
 
+    # Final exit leg for the fee model (shared with the manual journal):
+    # entry + take-profits are maker; stop-out / breakeven / timeout are market.
+    if outcome == "tp1_then_tp2":
+        final_exit, final_is_market = tp2, False
+    elif outcome == "tp1_then_be":
+        final_exit, final_is_market = entry, True        # breakeven stop = market
+    elif outcome == "loss":
+        final_exit, final_is_market = sl, True           # stop-out = market
+    else:                                                # timeout = closed at market
+        final_exit, final_is_market = df.iloc[end - 1]["close"], True
+    fee_R = fee_in_R(entry, sl, tp1, final_exit, tp1_hit, final_is_market)
+    net_R = round(realized_R - fee_R, 2)
+
     return {
         "direction": direction,
         "entry_price": entry,
@@ -75,6 +88,8 @@ def simulate_outcome(signal: dict, df: pd.DataFrame) -> dict:
         "bias_4h": signal["bias_4h"],
         "outcome": outcome,
         "realized_R": round(realized_R, 2),
+        "fee_R": round(fee_R, 3),
+        "net_R": net_R,
     }
 
 

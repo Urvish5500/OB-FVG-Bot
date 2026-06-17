@@ -27,7 +27,7 @@ def calculate_metrics(results: pd.DataFrame) -> dict:
         else:
             current = 0
 
-    return {
+    out = {
         "total_trades": total,
         "wins": wins,
         "losses": losses,
@@ -38,3 +38,17 @@ def calculate_metrics(results: pd.DataFrame) -> dict:
         "profit_factor": profit_factor,
         "max_consecutive_losses": max_loss,
     }
+
+    # Net-of-fees metrics, using the shared fee model (strategy.levels.fee_in_R)
+    if "net_R" in results.columns:
+        NR = results["net_R"]
+        net_gw = NR[NR > 0].sum()
+        net_gl = abs(NR[NR < 0].sum())
+        out.update({
+            "total_fees_R": round(results["fee_R"].sum(), 2) if "fee_R" in results.columns else None,
+            "total_net_R": round(NR.sum(), 2),
+            "avg_net_R_per_trade": round(NR.mean(), 2),
+            "net_profit_factor": round(net_gw / net_gl, 2) if net_gl > 0 else float("inf"),
+        })
+
+    return out

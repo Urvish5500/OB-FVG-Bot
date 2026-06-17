@@ -2,6 +2,7 @@ import os
 import psycopg2
 from dotenv import load_dotenv
 from models.trades import Trade
+from strategy.levels import MAKER_FEE, TAKER_FEE, exit_is_maker
 
 load_dotenv()
 
@@ -36,6 +37,10 @@ def init_db():
             exit_reason VARCHAR(20),
             pnl_pct FLOAT,
             pnl_usdt FLOAT,
+            fees_usdt FLOAT,
+            fees_r FLOAT,
+            net_pnl_usdt FLOAT,
+            net_r FLOAT,
             outcome VARCHAR(20),
             screenshot_path TEXT,
             notes TEXT,
@@ -45,6 +50,10 @@ def init_db():
     # migrations for tables created before these columns existed
     cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS notional FLOAT")
     cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS leverage FLOAT")
+    cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS fees_usdt FLOAT")
+    cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS fees_r FLOAT")
+    cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS net_pnl_usdt FLOAT")
+    cur.execute("ALTER TABLE trades ADD COLUMN IF NOT EXISTS net_r FLOAT")
     conn.commit()
     cur.close()
     conn.close()
@@ -108,7 +117,7 @@ def close_trade(trade_id: int, exit_price: float, exit_reason: str = "manual",
     conn = get_connection()
     cur = conn.cursor()
     cur.execute(
-        "SELECT entry_price, direction, position_size FROM trades WHERE id = %s",
+        "SELECT entry_price, direction, position_size, stop_loss FROM trades WHERE id = %s",
         (trade_id,),
     )
     row = cur.fetchone()
@@ -117,23 +126,37 @@ def close_trade(trade_id: int, exit_price: float, exit_reason: str = "manual",
         conn.close()
         raise ValueError(f"No trade with id {trade_id}")
 
-    entry_price, direction, qty = row
+    entry_price, direction, qty, stop_loss = row
     sign = 1 if direction == "long" else -1
     pnl_usdt = round(sign * (exit_price - entry_price) * qty, 2)
     pnl_pct = round(sign * (exit_price - entry_price) / entry_price * 100, 2)
+
+    # Fees via the shared model: entry filled as a limit (maker); the exit is
+    # maker only for take-profit reasons, else taker (stop/manual/market close).
+    exit_rate = MAKER_FEE if exit_is_maker(exit_reason) else TAKER_FEE
+    fees_usdt = round(qty * entry_price * MAKER_FEE + qty * exit_price * exit_rate, 2)
+    net_pnl_usdt = round(pnl_usdt - fees_usdt, 2)
+    risk = abs(entry_price - stop_loss)
+    one_R = qty * risk                                   # = RISK_PCT * equity_at_entry
+    fees_r = round(fees_usdt / one_R, 2) if one_R > 0 else None
+    net_r = round(net_pnl_usdt / one_R, 2) if one_R > 0 else None
+    # outcome classified on gross PnL, to match the journal and backtest
     outcome = "win" if pnl_usdt > 0 else "loss" if pnl_usdt < 0 else "breakeven"
 
     cur.execute("""
         UPDATE trades
         SET exit_price = %s, exit_time = NOW(), exit_reason = %s,
-            pnl_usdt = %s, pnl_pct = %s, outcome = %s,
+            pnl_usdt = %s, pnl_pct = %s,
+            fees_usdt = %s, fees_r = %s, net_pnl_usdt = %s, net_r = %s, outcome = %s,
             notes = COALESCE(notes || ' | ' || %s, notes, %s)
         WHERE id = %s
-    """, (exit_price, exit_reason, pnl_usdt, pnl_pct, outcome, notes, notes, trade_id))
+    """, (exit_price, exit_reason, pnl_usdt, pnl_pct,
+          fees_usdt, fees_r, net_pnl_usdt, net_r, outcome, notes, notes, trade_id))
     conn.commit()
     cur.close()
     conn.close()
     print(f"✓ Trade {trade_id} closed @ {exit_price} | {outcome} "
-          f"| PnL ${pnl_usdt} ({pnl_pct}%)")
-    return {"trade_id": trade_id, "outcome": outcome,
-            "pnl_usdt": pnl_usdt, "pnl_pct": pnl_pct}
+          f"| gross ${pnl_usdt} | fees ${fees_usdt} ({fees_r}R) | NET ${net_pnl_usdt} ({net_r}R)")
+    return {"trade_id": trade_id, "outcome": outcome, "pnl_usdt": pnl_usdt,
+            "pnl_pct": pnl_pct, "fees_usdt": fees_usdt, "net_pnl_usdt": net_pnl_usdt,
+            "net_r": net_r}

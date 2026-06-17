@@ -6,9 +6,8 @@ manual-only). Trades are logged AFTER exit (completed), using the same
 
 from datetime import datetime, timedelta
 from database.db import get_connection, get_all_trades
-from strategy.levels import size_trade
+from strategy.levels import size_trade, fee_in_R, exit_is_maker, RISK_PCT
 
-RISK_PCT = 0.004
 MATCH_WINDOW_MIN = 30  # bot/manual entries within this many minutes = same setup
 
 
@@ -38,6 +37,10 @@ def init_manual_table():
             equity_at_entry FLOAT,
             pnl_usdt FLOAT,
             pnl_pct FLOAT,
+            fees_usdt FLOAT,
+            fees_r FLOAT,
+            net_pnl_usdt FLOAT,
+            net_r FLOAT,
             outcome VARCHAR(20),
             related_bot_trade_id INT,
             screenshot_path TEXT,
@@ -52,6 +55,18 @@ def init_manual_table():
 
 def _parse_time(t):
     return datetime.fromisoformat(t) if isinstance(t, str) else t
+
+
+def compute_fees(entry, stop, tp1, final_exit, hit_tp1, exit_reason,
+                 equity, tp_market=False):
+    """Round-turn fees (usdt, R) for a manual trade, via the shared fee model in
+    strategy.levels — identical convention to the backtest. Stop-outs (sl /
+    breakeven) take the final leg at market; tp_market forces TP legs to market.
+    """
+    final_is_market = not exit_is_maker(exit_reason)
+    fees_r = fee_in_R(entry, stop, tp1, final_exit, hit_tp1, final_is_market, tp_market)
+    fees_usdt = round(fees_r * RISK_PCT * equity, 2)
+    return fees_usdt, round(fees_r, 2)
 
 
 def insert_manual_trade(data: dict):
@@ -81,6 +96,12 @@ def insert_manual_trade(data: dict):
     risk_reward = round(abs(final_exit - entry) / risk, 2) if risk > 0 else None
     sizing = size_trade(equity, entry, stop)
 
+    fees_usdt, fees_r = compute_fees(
+        entry, stop, tp1, final_exit, hit_tp1,
+        data.get("exit_reason"), equity, tp_market=data.get("tp_market", False))
+    net_pnl = round(pnl_usdt - fees_usdt, 2)
+    net_r = round(realized_R - fees_r, 2)
+
     conn = get_connection()
     cur = conn.cursor()
     cur.execute("""
@@ -88,17 +109,20 @@ def insert_manual_trade(data: dict):
             status, symbol, direction, bias_1d, bias_4h, entry_price, entry_time,
             stop_loss, take_profit_1, final_exit_price, exit_reason, hit_tp1,
             risk_reward, realized_r, position_size, notional, leverage,
-            equity_at_entry, pnl_usdt, pnl_pct, outcome, screenshot_path, notes
+            equity_at_entry, pnl_usdt, pnl_pct, fees_usdt, fees_r,
+            net_pnl_usdt, net_r, outcome, screenshot_path, notes
         ) VALUES (
             'taken', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s
         ) RETURNING id
     """, (
         data["symbol"], direction, data.get("bias_1d"), data.get("bias_4h"),
         entry, _parse_time(data["entry_time"]), stop, tp1, final_exit,
         data.get("exit_reason"), hit_tp1, risk_reward, realized_R,
         sizing["quantity"], sizing["notional"], sizing["leverage"],
-        equity, pnl_usdt, pnl_pct, outcome,
+        equity, pnl_usdt, pnl_pct, fees_usdt, fees_r,
+        net_pnl, net_r, outcome,
         data.get("screenshot_path"), data.get("notes"),
     ))
     tid = cur.fetchone()[0]
@@ -106,8 +130,8 @@ def insert_manual_trade(data: dict):
     cur.close()
     conn.close()
     print(f"✓ [manual #{tid}] {data['symbol']} {direction} | {outcome} "
-          f"| {realized_R}R | R:R {risk_reward} | {sizing['leverage']}x "
-          f"| PnL ${pnl_usdt} ({pnl_pct}%)")
+          f"| gross {realized_R}R / ${pnl_usdt} | fees ${fees_usdt} ({fees_r}R) "
+          f"| NET {net_r}R / ${net_pnl} | R:R {risk_reward} | {sizing['leverage']}x")
     return tid
 
 
