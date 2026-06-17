@@ -2,8 +2,7 @@ import pandas as pd
 from data.fetcher import fetch_ohlcv
 from indicators.ema import get_ema_signals
 from indicators.sr_zones import detect_zones
-from indicators.volume_analysis import get_volume_signals
-from strategy.levels import compute_stop, compute_targets
+from strategy.levels import compute_stop, compute_targets, is_rejection
 
 MAX_HOLD_BARS = 200  # ~2 days on 15m before a runner is force-closed at market
 
@@ -83,7 +82,6 @@ def run_backtest(symbol: str = "BTC/USDT") -> pd.DataFrame:
     df_4h = get_ema_signals(fetch_ohlcv(symbol, "4h", limit=365 * 6))
     df_15m = fetch_ohlcv(symbol, "15m", limit=365 * 96)
 
-    df_15m = get_volume_signals(df_15m)
     df_15m["bias_1d"] = df_1d["trend_bias"].reindex(df_15m.index, method="ffill")
     df_15m["bias_4h"] = df_4h["trend_bias"].reindex(df_15m.index, method="ffill")
 
@@ -92,10 +90,8 @@ def run_backtest(symbol: str = "BTC/USDT") -> pd.DataFrame:
     signals = []
     for i in range(len(df_15m)):
         bar = df_15m.iloc[i]
-        bias = bar["bias_1d"] if bar["bias_1d"] == bar["bias_4h"] else None
+        bias = bar["bias_1d"]
         if bias not in ("bullish", "bearish"):
-            continue
-        if bar["volume_tier"] not in ("high", "very_high"):
             continue
 
         direction = "long" if bias == "bullish" else "short"
@@ -107,7 +103,7 @@ def run_backtest(symbol: str = "BTC/USDT") -> pd.DataFrame:
         for _, zone in zones_now.iterrows():
             if zone["type"] != zone_type:
                 continue
-            if zone["zone_bottom"] <= bar["close"] <= zone["zone_top"]:
+            if is_rejection(direction, bar, zone):
                 entry = bar["close"]
                 sl = compute_stop(direction, entry, zone, df_15m, i)
                 tp1, tp2 = compute_targets(direction, entry, sl, zones_now)

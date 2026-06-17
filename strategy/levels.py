@@ -8,6 +8,16 @@ SWING_LOOKBACK = 20   # bars (~5h on 15m) for the recent swing-high/low referenc
 RISK_PCT = 0.004      # risk exactly 0.4% of equity per trade
 
 
+def is_rejection(direction: str, bar, zone) -> bool:
+    """True if the bar wicked into the box and closed back out in the bias
+    direction — i.e. price *rejected* the box rather than broke through it."""
+    if direction == "long":
+        # support: low dipped into the box, close recovered back above its top
+        return bar["low"] <= zone["zone_top"] and bar["close"] > zone["zone_top"]
+    # resistance: high poked into the box, close fell back below its bottom
+    return bar["high"] >= zone["zone_bottom"] and bar["close"] < zone["zone_bottom"]
+
+
 def compute_stop(direction: str, entry: float, zone, df, bar_idx: int,
                  lookback: int = SWING_LOOKBACK) -> float:
     """Stop = the *farther* of the box edge and the recent swing high/low."""
