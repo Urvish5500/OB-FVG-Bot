@@ -6,6 +6,7 @@ discretionary logic used when drawing trades by hand on TradingView.
 
 SWING_LOOKBACK = 20   # bars (~5h on 15m) for the recent swing-high/low reference
 RISK_PCT = 0.004      # risk exactly 0.4% of equity per trade
+MIN_REWARD_RR = 2.0   # only take entries where the next opposing box is >= this many R away
 
 
 def is_rejection(direction: str, bar, zone) -> bool:
@@ -45,22 +46,30 @@ def find_opposing_box(direction: str, entry: float, zones):
     return None if cands.empty else cands.loc[cands["zone_top"].idxmax()]
 
 
-def compute_targets(direction: str, entry: float, stop: float, zones):
-    """TP1 = 2R. TP2 = nearest opposing box edge if beyond TP1, else 3R."""
+def reward_to_target(direction: str, entry: float, stop: float, zones) -> float:
+    """Reward:risk to the nearest opposing box — distance(entry -> box edge)
+    divided by the stop distance. 0.0 when there is no box to target. Used as
+    an entry filter: only take rejections with real structural room to run."""
     risk = abs(entry - stop)
+    if risk == 0:
+        return 0.0
     box = find_opposing_box(direction, entry, zones)
+    if box is None:
+        return 0.0
+    edge = box["zone_bottom"] if direction == "long" else box["zone_top"]
+    reward = (edge - entry) if direction == "long" else (entry - edge)
+    return reward / risk
+
+
+def compute_targets(direction: str, entry: float, stop: float, zones):
+    """TP1 = 2R. TP2 = fixed 3R (1:3)."""
+    risk = abs(entry - stop)
     if direction == "long":
         tp1 = entry + 2 * risk
-        if box is not None and box["zone_bottom"] > tp1:
-            tp2 = box["zone_bottom"]
-        else:
-            tp2 = entry + 3 * risk
+        tp2 = entry + 3 * risk
     else:
         tp1 = entry - 2 * risk
-        if box is not None and box["zone_top"] < tp1:
-            tp2 = box["zone_top"]
-        else:
-            tp2 = entry - 3 * risk
+        tp2 = entry - 3 * risk
     return tp1, tp2
 
 

@@ -1,7 +1,8 @@
 from data.fetcher import fetch_ohlcv
 from indicators.ema import get_ema_signals
 from indicators.sr_zones import detect_zones, intact_zones
-from strategy.levels import compute_stop, compute_targets, size_trade, is_rejection
+from strategy.levels import (compute_stop, compute_targets, size_trade, is_rejection,
+                             reward_to_target, MIN_REWARD_RR)
 
 
 def detect_signal(symbol: str, equity: float = 10000.0) -> dict | None:
@@ -17,12 +18,15 @@ def detect_signal(symbol: str, equity: float = 10000.0) -> dict | None:
 
     last_idx = len(df_15m) - 1
     bar = df_15m.iloc[last_idx]
-    bias = bar["bias_1d"]
 
-    if bias not in ("bullish", "bearish"):
+    # trade only with the trend: 1d AND 4h bias must agree on direction
+    if bar["bias_1d"] == "bullish" and bar["bias_4h"] == "bullish":
+        direction = "long"
+    elif bar["bias_1d"] == "bearish" and bar["bias_4h"] == "bearish":
+        direction = "short"
+    else:
         return None
 
-    direction = "long" if bias == "bullish" else "short"
     zone_type = "support" if direction == "long" else "resistance"
 
     # check the latest bar against every box still intact at this bar — a box
@@ -35,6 +39,9 @@ def detect_signal(symbol: str, equity: float = 10000.0) -> dict | None:
         if is_rejection(direction, bar, zone):
             entry = bar["close"]
             sl = compute_stop(direction, entry, zone, df_15m, last_idx)
+            # require real structural room to the next box, else no signal
+            if reward_to_target(direction, entry, sl, zones_now) < MIN_REWARD_RR:
+                break
             tp1, tp2 = compute_targets(direction, entry, sl, zones_now)
             sizing = size_trade(equity, entry, sl)
             return {

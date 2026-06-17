@@ -2,7 +2,8 @@ import pandas as pd
 from data.fetcher import fetch_ohlcv
 from indicators.ema import get_ema_signals
 from indicators.sr_zones import detect_zones, intact_zones
-from strategy.levels import compute_stop, compute_targets, is_rejection
+from strategy.levels import (compute_stop, compute_targets, is_rejection,
+                             reward_to_target, MIN_REWARD_RR)
 
 MAX_HOLD_BARS = 200  # ~2 days on 15m before a runner is force-closed at market
 
@@ -90,11 +91,14 @@ def run_backtest(symbol: str = "BTC/USDT") -> pd.DataFrame:
     signals = []
     for i in range(len(df_15m)):
         bar = df_15m.iloc[i]
-        bias = bar["bias_1d"]
-        if bias not in ("bullish", "bearish"):
+        # trade only with the trend: 1d AND 4h bias must agree on direction
+        if bar["bias_1d"] == "bullish" and bar["bias_4h"] == "bullish":
+            direction = "long"
+        elif bar["bias_1d"] == "bearish" and bar["bias_4h"] == "bearish":
+            direction = "short"
+        else:
             continue
 
-        direction = "long" if bias == "bullish" else "short"
         zone_type = "support" if direction == "long" else "resistance"
 
         # boxes that are intact at this bar: confirmed (no lookahead) and not
@@ -107,6 +111,9 @@ def run_backtest(symbol: str = "BTC/USDT") -> pd.DataFrame:
             if is_rejection(direction, bar, zone):
                 entry = bar["close"]
                 sl = compute_stop(direction, entry, zone, df_15m, i)
+                # require real structural room to the next box, else skip the bar
+                if reward_to_target(direction, entry, sl, zones_now) < MIN_REWARD_RR:
+                    break
                 tp1, tp2 = compute_targets(direction, entry, sl, zones_now)
                 signals.append({
                     "bar_index": i,
