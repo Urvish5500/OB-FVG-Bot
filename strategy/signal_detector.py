@@ -16,7 +16,7 @@ def detect_signal(symbol: str, equity: float = 10000.0) -> dict | None:
 
     zones = detect_zones(df_15m)
 
-    last_idx = len(df_15m) - 1
+    last_idx = len(df_15m) - 2  # most recent CLOSED candle (the last row is still forming)
     bar = df_15m.iloc[last_idx]
 
     # trade only with the trend: 1d AND 4h bias must agree on direction
